@@ -95,6 +95,13 @@ def retrieval_inf(queries,query_ids,documents,doc_ids,task,model_id,instructions
         np.save(cache_path, doc_emb)
 
     doc_emb = torch.tensor(doc_emb)
+
+    # Truncate embeddings if embedding_dim is specified (for MRL evaluation)
+    embedding_dim = kwargs.get('embedding_dim', None)
+    if embedding_dim is not None:
+        print(f"Truncating embeddings from {doc_emb.shape[1]} to {embedding_dim} dimensions")
+        doc_emb = doc_emb[:, :embedding_dim]
+
     doc_emb = F.normalize(doc_emb, p=2, dim=1)
     query_emb = []
     for start_idx in trange(0, len(queries), batch_size):
@@ -105,6 +112,12 @@ def retrieval_inf(queries,query_ids,documents,doc_ids,task,model_id,instructions
         query_emb += embeddings
     query_emb = torch.tensor(query_emb)
     print("query_emb shape:", query_emb.shape)
+
+    # Truncate query embeddings if embedding_dim is specified
+    if embedding_dim is not None:
+        query_emb = query_emb[:, :embedding_dim]
+        print(f"Truncated query_emb shape: {query_emb.shape}")
+
     query_emb = F.normalize(query_emb, p=2, dim=1)
     scores = (query_emb @ doc_emb.T) * 100
     scores = scores.tolist()
