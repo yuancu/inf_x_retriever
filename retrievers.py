@@ -5,6 +5,7 @@ import pytrec_eval
 from tqdm import tqdm,trange
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModel
+from sentence_transformers import SentenceTransformer
 
 
 TASK_MAP = {
@@ -124,8 +125,101 @@ def retrieval_inf(queries,query_ids,documents,doc_ids,task,model_id,instructions
     return get_scores(query_ids=query_ids,doc_ids=doc_ids,scores=scores,excluded_ids=excluded_ids)
 
 
+@torch.no_grad()
+def retrieval_sentence_transformer(queries,query_ids,documents,doc_ids,task,model_id,instructions,cache_dir,excluded_ids,long_context,**kwargs):
+    """
+    Retrieval function for sentence-transformer compatible models.
+    Uses model.encode() instead of manual tokenization and pooling.
+    """
+    import sys
+    from pathlib import Path
+
+    print(f"Loading sentence-transformer model: {model_id}")
+
+    # Handle local models with custom modules (e.g., from save_model_to_artifacts.py)
+    # Add parent directory to sys.path to allow imports
+    if os.path.exists(model_id):
+        # It's a local path
+        model_path = Path(model_id).resolve()
+        # Add the directory containing the model to sys.path
+        parent_dir = model_path.parent
+        if str(parent_dir) not in sys.path:
+            sys.path.insert(0, str(parent_dir))
+        # Also add grandparent (in case save_model_to_artifacts.py is there)
+        grandparent_dir = parent_dir.parent
+        if str(grandparent_dir) not in sys.path:
+            sys.path.insert(0, str(grandparent_dir))
+
+    model = SentenceTransformer(model_id, trust_remote_code=True)
+
+    # Apply instruction prefix to queries if provided
+    queries = add_instruct_concatenate(texts=queries, task=task, instruction=instructions['query'])
+    batch_size = kwargs.get('encode_batch_size', 32)
+
+    # Handle document embeddings with caching
+    cpu_emb_list = []
+    doc_emb = None
+    cache_path = os.path.join(cache_dir, 'doc_emb', model_id.replace('/', '_'), task, f"long_{long_context}_{batch_size}.npy")
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+
+    if os.path.isfile(cache_path):
+        try:
+            doc_emb = np.load(cache_path, allow_pickle=False)
+            print(f"Loaded cached document embeddings from {cache_path}")
+        except Exception as e:
+            print(f"Warning: failed to load existing cache ({cache_path}): {e}. Will recompute from start.")
+            doc_emb = None
+
+    if doc_emb is None or doc_emb.shape[0] != len(documents):
+        print("Encoding documents...")
+        # Encode documents in batches
+        doc_emb = model.encode(
+            documents,
+            batch_size=batch_size,
+            normalize_embeddings=True,
+            show_progress_bar=True,
+            convert_to_numpy=True
+        )
+        np.save(cache_path, doc_emb)
+        print(f"Saved document embeddings to {cache_path}")
+
+    doc_emb = torch.tensor(doc_emb)
+
+    # Truncate embeddings if embedding_dim is specified (for MRL evaluation)
+    embedding_dim = kwargs.get('embedding_dim', None)
+    if embedding_dim is not None:
+        print(f"Truncating embeddings from {doc_emb.shape[1]} to {embedding_dim} dimensions")
+        doc_emb = doc_emb[:, :embedding_dim]
+        # Re-normalize after truncation
+        doc_emb = F.normalize(doc_emb, p=2, dim=1)
+
+    print("Encoding queries...")
+    # Encode queries
+    query_emb = model.encode(
+        queries,
+        batch_size=batch_size,
+        normalize_embeddings=True,
+        show_progress_bar=True,
+        convert_to_numpy=True
+    )
+    query_emb = torch.tensor(query_emb)
+    print("query_emb shape:", query_emb.shape)
+
+    # Truncate query embeddings if embedding_dim is specified
+    if embedding_dim is not None:
+        query_emb = query_emb[:, :embedding_dim]
+        print(f"Truncated query_emb shape: {query_emb.shape}")
+        # Re-normalize after truncation
+        query_emb = F.normalize(query_emb, p=2, dim=1)
+
+    scores = (query_emb @ doc_emb.T) * 100
+    scores = scores.tolist()
+    return get_scores(query_ids=query_ids, doc_ids=doc_ids, scores=scores, excluded_ids=excluded_ids)
+
+
 RETRIEVAL_FUNCS = {
-    'inf': retrieval_inf
+    'inf': retrieval_inf,
+    'sentence_transformer': retrieval_sentence_transformer
 }
 
 

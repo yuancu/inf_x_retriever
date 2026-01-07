@@ -3,3 +3,6 @@
 **/.DS_Store
 __pycache__/
 cache/
+beir_datasets
+cache_beir
+outputs_beir

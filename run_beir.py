@@ -2,7 +2,7 @@ import os
 import argparse
 import json
 from tqdm import tqdm
-from retrievers import retrieval_inf, calculate_retrieval_metrics
+from retrievers import RETRIEVAL_FUNCS, calculate_retrieval_metrics
 from beir import util
 from beir.datasets.data_loader import GenericDataLoader
 
@@ -11,7 +11,7 @@ if __name__=='__main__':
     parser.add_argument('--dataset', type=str, required=True,
                         choices=['nfcorpus', 'scidocs', 'scifact'])
     parser.add_argument('--model', type=str, default='inf',
-                        choices=['inf'])
+                        help='Model ID: "inf" for infly/inf-retriever-v1-pro, or any HuggingFace model ID for sentence-transformers')
     parser.add_argument('--doc_max_length', type=int, default=8192)
     parser.add_argument('--encode_batch_size', type=int, default=16)
     parser.add_argument('--embedding_dim', type=int, default=None,
@@ -23,8 +23,10 @@ if __name__=='__main__':
     args = parser.parse_args()
 
     # Setup output directory
+    # Use simplified model name for directory (replace / with _)
+    model_name = args.model.replace('/', '_')
     dim_suffix = f"_dim{args.embedding_dim}" if args.embedding_dim else ""
-    args.output_dir = os.path.join(args.output_dir, f"{args.dataset}_{args.model}{dim_suffix}")
+    args.output_dir = os.path.join(args.output_dir, f"{args.dataset}_{model_name}{dim_suffix}")
     if not os.path.isdir(args.output_dir):
         os.makedirs(args.output_dir)
 
@@ -57,7 +59,7 @@ if __name__=='__main__':
     if not os.path.isfile(score_file_path):
         print("Running retrieval...")
 
-        # Define instruction for inf-retriever
+        # Define instruction for retriever
         instructions = {
             'query': "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
         }
@@ -74,7 +76,14 @@ if __name__=='__main__':
             kwargs['embedding_dim'] = args.embedding_dim
             print(f"Using only first {args.embedding_dim} dimensions for retrieval")
 
-        scores = retrieval_inf(
+        # Determine which retrieval function to use
+        if args.model == 'inf':
+            retrieval_func = RETRIEVAL_FUNCS['inf']
+        else:
+            # Use sentence-transformer for any other model ID
+            retrieval_func = RETRIEVAL_FUNCS['sentence_transformer']
+
+        scores = retrieval_func(
             queries=query_texts,
             query_ids=query_ids,
             documents=documents,
