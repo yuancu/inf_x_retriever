@@ -9,7 +9,7 @@ from beir.datasets.data_loader import GenericDataLoader
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, required=True,
-                        choices=['nfcorpus', 'scidocs', 'scifact'])
+                        choices=['nfcorpus', 'scidocs', 'scifact', 'msmarco'])
     parser.add_argument('--model', type=str, default='inf',
                         help='Model ID: "inf" for infly/inf-retriever-v1-pro, or any HuggingFace model ID for sentence-transformers')
     parser.add_argument('--doc_max_length', type=int, default=8192)
